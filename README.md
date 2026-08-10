@@ -1,4 +1,4 @@
-# Gesture Blur Camera
+# FOTO KITA BLUR DAWGGGGGGGG
 
 Kamera desktop real-time yang otomatis mengaktifkan efek blur ketika kamu
 menunjukkan gesture ✌️ PEACE, dibangun dengan OpenCV + MediaPipe Tasks

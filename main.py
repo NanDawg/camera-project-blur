@@ -1,16 +1,3 @@
-"""
-Gesture Blur Camera
-====================
-Real-time webcam app that blurs the video feed when a PEACE (✌️) hand
-gesture is detected, using the MediaPipe Tasks Hand Landmarker API.
-
-Run:
-    python main.py
-
-Requires hand_landmarker.task to be present in the same folder as this file.
-See README.md for full setup instructions and hotkeys.
-"""
-
 import os
 import sys
 import time
@@ -35,15 +22,9 @@ TARGET_CAM_HEIGHT = 1080
 
 WINDOW_NAME = "Gesture Blur Camera"
 
-# Anti-flicker with fast-attack / slow-release hysteresis:
-# blur turns ON almost immediately once PEACE is seen (few frames),
-# but only turns OFF after several consecutive non-PEACE frames.
-# This avoids the "have to pass through open-hand first" feeling while
-# still preventing blur from flickering off on a single bad frame.
-GESTURE_ON_FRAMES = 2
-GESTURE_OFF_FRAMES = 5
+GESTURE_ON_FRAMES = 1
+GESTURE_OFF_FRAMES = 2
 
-# Max Gaussian kernel size per blur mode (must end up odd at runtime).
 BLUR_LEVELS = {
     "light": 15,
     "medium": 35,
@@ -51,11 +32,8 @@ BLUR_LEVELS = {
 }
 DEFAULT_BLUR_MODE = "heavy"
 
-# How fast the blur amount interpolates toward its target each frame.
-# 0.0 = never moves, 1.0 = instant (no smoothing).
-BLUR_SMOOTH_SPEED = 0.8
+BLUR_SMOOTH_SPEED = 1.0
 
-# Gesture sensitivity thresholds (tunable at runtime with '[' and ']').
 FINGER_EXTENSION_THRESHOLD = 0.12
 THUMB_EXTENSION_THRESHOLD = 0.06
 
@@ -267,7 +245,20 @@ class BlurController:
         if kernel <= 1:
             return frame
 
-        return cv2.GaussianBlur(frame, (kernel, kernel), 0)
+        # Downscale -> blur -> upscale. Blurring a smaller image is much
+        # cheaper than blurring full-res, and since the result is blurry
+        # anyway, the loss of detail from downscaling is invisible.
+        h, w = frame.shape[:2]
+        scale = 0.35
+        small = cv2.resize(frame, (max(1, int(w * scale)), max(1, int(h * scale))),
+                            interpolation=cv2.INTER_LINEAR)
+
+        small_kernel = max(3, int(kernel * scale))
+        if small_kernel % 2 == 0:
+            small_kernel += 1
+
+        blurred_small = cv2.GaussianBlur(small, (small_kernel, small_kernel), 0)
+        return cv2.resize(blurred_small, (w, h), interpolation=cv2.INTER_LINEAR)
 
 
 # ============================================================
@@ -389,6 +380,10 @@ class GestureBlurCameraApp:
 
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, TARGET_CAM_WIDTH)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, TARGET_CAM_HEIGHT)
+        # Keep the internal frame buffer as small as possible so we always
+        # read the newest frame instead of a stale queued one — reduces
+        # perceived lag/stutter.
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
         actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -423,7 +418,14 @@ class GestureBlurCameraApp:
                 self._last_timestamp = timestamp_ms
 
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                # Feed a downscaled copy to MediaPipe for detection — hand
+                # landmark detection doesn't need full 1080p input, and this
+                # cuts inference cost significantly. Landmarks are normalized
+                # (0..1) so the smaller input size doesn't affect accuracy
+                # of the gesture logic below.
+                detect_h, detect_w = rgb.shape[0] // 2, rgb.shape[1] // 2
+                rgb_small = cv2.resize(rgb, (detect_w, detect_h), interpolation=cv2.INTER_LINEAR)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_small)
 
                 result = self.landmarker.detect_for_video(mp_image, timestamp_ms)
 
@@ -497,9 +499,16 @@ class GestureBlurCameraApp:
             cv2.putText(img, "REC", (48, 40), cv2.FONT_HERSHEY_SIMPLEX,
                         0.55, (0, 0, 255), 2, cv2.LINE_AA)
 
-        # Top-center: AUTO GESTURE / MANUAL BLUR mode
-        mode_text = "MANUAL BLUR" if self.manual_mode else "AUTO GESTURE"
-        mw = 170
+# Top-center: mode / status text.
+        blur_on = self.blur_ctrl.current_strength > 0.05
+        if self.manual_mode:
+            mode_text = "MANUAL BLUR"
+        elif blur_on:
+            mode_text = "WHENN YAAHHH"
+        else:
+            mode_text = "AUTO GESTURE"
+
+        mw = 190
         draw_rounded_panel(img, (w - mw) // 2, 20, mw, 36)
         cv2.putText(img, mode_text, ((w - mw) // 2 + 14, 44), cv2.FONT_HERSHEY_SIMPLEX,
                     0.5, (255, 255, 255), 1, cv2.LINE_AA)
@@ -510,7 +519,6 @@ class GestureBlurCameraApp:
         label = GESTURE_LABELS.get(gesture, "NORMAL")
         gesture_color = (255, 255, 255) if gesture == "peace" else (190, 190, 190)
 
-        blur_on = self.blur_ctrl.current_strength > 0.05
         blur_text = "BLUR ON" if blur_on else "BLUR OFF"
         blur_color = (0, 220, 120) if blur_on else (140, 140, 140)
 
@@ -660,7 +668,6 @@ class GestureBlurCameraApp:
                 self.video_writer = None
             print("Recording stopped.")
 
-    # ---------------- Cleanup ----------------
 
     def _cleanup(self):
         if self.video_writer is not None:

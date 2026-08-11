@@ -7,11 +7,6 @@ from datetime import datetime
 import cv2
 import mediapipe as mp
 
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
 MODEL_PATH = "hand_landmarker.task"
 
 DEFAULT_WINDOW_WIDTH = 1280
@@ -40,9 +35,6 @@ THUMB_EXTENSION_THRESHOLD = 0.06
 SCREENSHOT_DIR = "screenshots"
 RECORDING_DIR = "recordings"
 
-# Best-effort raw key codes reported by cv2.waitKeyEx() for the F11 key.
-# These vary across OS/OpenCV builds, so 'F' is provided as a guaranteed
-# fallback fullscreen toggle regardless of platform.
 F11_KEYCODES = {7405568, 122, 1113133}
 
 # Hand landmark indices (MediaPipe Hand Landmarker - 21 points per hand)
